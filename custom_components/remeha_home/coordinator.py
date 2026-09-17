@@ -222,7 +222,7 @@ class RemehaHomeUpdateCoordinator(DataUpdateCoordinator):
                 return activity
             return self.dhw_activity_cache.get(zone_id)
         if mode == "Off":
-            activity = "Anti-Frost"
+            activity = "Eco"
             self.dhw_activity_cache[zone_id] = activity
             return activity
         return None

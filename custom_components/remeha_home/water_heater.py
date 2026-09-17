@@ -85,11 +85,25 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         self.appliance_id = appliance_id
         self.hot_water_zone_id = hot_water_zone_id
         self._attr_unique_id = "_".join([DOMAIN, self.hot_water_zone_id, "water_heater"])
+        self._optimistic_mode: str | None = None
+        self._optimistic_target_setpoint: float | None = None
+        self._optimistic_comfort_setpoint: float | None = None
+        self._optimistic_reduced_setpoint: float | None = None
 
     @property
     def _data(self) -> dict:
         """Return the DHW zone information."""
         return self.coordinator.get_by_id(self.hot_water_zone_id)
+
+    @property
+    def _mode(self) -> str | None:
+        """Return current mode including optimistic updates."""
+        return self._optimistic_mode or self._data.get("dhwZoneMode")
+
+    @staticmethod
+    def _with_fallback(optimistic: float | None, fallback: float | None) -> float | None:
+        """Prefer optimistic value when present, otherwise fallback."""
+        return optimistic if optimistic is not None else fallback
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -99,7 +113,7 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
     @property
     def current_operation(self) -> str | None:
         """Return the current operation mode."""
-        return REMEHA_DHW_MODE_TO_OPERATION.get(self._data.get("dhwZoneMode"))
+        return REMEHA_DHW_MODE_TO_OPERATION.get(self._mode)
 
     @property
     def operation_list(self) -> list[str]:
@@ -109,11 +123,17 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
     @property
     def target_temperature(self) -> float | None:
         """Return the target temperature based on the active setpoint."""
+        if self._optimistic_target_setpoint is not None:
+            return self._optimistic_target_setpoint
         setpoint_type = self._current_setpoint_type()
         if setpoint_type == "comfort":
-            return self._data.get("comfortSetPoint")
+            return self._with_fallback(
+                self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
+            )
         if setpoint_type == "eco":
-            return self._data.get("reducedSetpoint")
+            return self._with_fallback(
+                self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
+            )
         return self._data.get("targetSetpoint")
 
     @property
@@ -141,7 +161,7 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
 
     def _current_setpoint_type(self) -> str:
         """Return the active setpoint type based on the current mode."""
-        mode = self._data.get("dhwZoneMode")
+        mode = self._mode
         if mode in ("ContinuousComfort", "Boost"):
             return "comfort"
         if mode == "Off":
@@ -180,15 +200,14 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
 
         setpoint_type = self._current_setpoint_type()
         if setpoint_type == "comfort":
-            # Optimistic local update to avoid transient UI mismatches
-            self._data["comfortSetPoint"] = temperature
-            self._data["targetSetpoint"] = temperature
+            self._optimistic_comfort_setpoint = temperature
+            self._optimistic_target_setpoint = temperature
             await self.api.async_set_dhw_comfort_setpoint(
                 self.hot_water_zone_id, temperature
             )
         else:
-            self._data["reducedSetpoint"] = temperature
-            self._data["targetSetpoint"] = temperature
+            self._optimistic_reduced_setpoint = temperature
+            self._optimistic_target_setpoint = temperature
             await self.api.async_set_dhw_reduced_setpoint(
                 self.hot_water_zone_id, temperature
             )
@@ -215,7 +234,7 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
             return
 
         # Optimistic update until the coordinator polls fresh data
-        self._data["dhwZoneMode"] = target_mode
+        self._optimistic_mode = target_mode
         self._set_optimistic_target_setpoint(target_mode)
         self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
@@ -223,18 +242,53 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
     def _set_optimistic_target_setpoint(self, target_mode: str) -> None:
         """Update local target setpoint to reflect the selected mode immediately."""
         if target_mode in ("ContinuousComfort", "Boost"):
-            self._data["targetSetpoint"] = self._data.get("comfortSetPoint")
+            self._optimistic_target_setpoint = (
+                self._with_fallback(
+                    self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
+                )
+            )
             return
         if target_mode == "Scheduling":
             activity = detect_dhw_setpoint_activity(
                 self._data.get("targetSetpoint"),
-                self._data.get("comfortSetPoint"),
-                self._data.get("reducedSetpoint"),
+                self._with_fallback(
+                    self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
+                ),
+                self._with_fallback(
+                    self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
+                ),
             )
             if activity == "Comfort":
-                self._data["targetSetpoint"] = self._data.get("comfortSetPoint")
+                self._optimistic_target_setpoint = (
+                    self._with_fallback(
+                        self._optimistic_comfort_setpoint,
+                        self._data.get("comfortSetPoint"),
+                    )
+                )
             elif activity == "Eco":
-                self._data["targetSetpoint"] = self._data.get("reducedSetpoint")
+                self._optimistic_target_setpoint = (
+                    self._with_fallback(
+                        self._optimistic_reduced_setpoint,
+                        self._data.get("reducedSetpoint"),
+                    )
+                )
             return
         if target_mode == "Off":
-            self._data["targetSetpoint"] = self._data.get("reducedSetpoint")
+            self._optimistic_target_setpoint = (
+                self._with_fallback(
+                    self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
+                )
+            )
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return super().available and self._data is not None
+
+    def _handle_coordinator_update(self) -> None:
+        """Reset optimistic values after coordinator refresh."""
+        self._optimistic_mode = None
+        self._optimistic_target_setpoint = None
+        self._optimistic_comfort_setpoint = None
+        self._optimistic_reduced_setpoint = None
+        super()._handle_coordinator_update()
