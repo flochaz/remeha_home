@@ -221,21 +221,28 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         if not target_mode:
             return
 
-        if self._mode == "Boost" and target_mode != "Boost":
+        leaving_boost = self._mode == "Boost" and target_mode != "Boost"
+        if leaving_boost:
             await self.api.async_set_hot_water_boost(self.hot_water_zone_id, False)
-            await self.coordinator.async_request_refresh()
 
-        if target_mode == "ContinuousComfort":
-            await self.api.async_set_dhw_mode_comfort(self.hot_water_zone_id)
-        elif target_mode == "Scheduling":
-            await self.api.async_set_dhw_mode_schedule(self.hot_water_zone_id)
-        elif target_mode == "Off":
-            await self.api.async_set_dhw_mode_eco(self.hot_water_zone_id)
-        elif target_mode == "Boost":
-            duration = self._data.get("boostDuration") or 30
-            await self.api.async_set_hot_water_boost(self.hot_water_zone_id, True, duration)
-        else:
-            return
+        try:
+            if target_mode == "ContinuousComfort":
+                await self.api.async_set_dhw_mode_comfort(self.hot_water_zone_id)
+            elif target_mode == "Scheduling":
+                await self.api.async_set_dhw_mode_schedule(self.hot_water_zone_id)
+            elif target_mode == "Off":
+                await self.api.async_set_dhw_mode_eco(self.hot_water_zone_id)
+            elif target_mode == "Boost":
+                duration = self._data.get("boostDuration") or 30
+                await self.api.async_set_hot_water_boost(
+                    self.hot_water_zone_id, True, duration
+                )
+            else:
+                return
+        except Exception:
+            if leaving_boost:
+                await self.coordinator.async_request_refresh()
+            raise
 
         # Optimistic update until the coordinator polls fresh data
         self._optimistic_mode = target_mode
