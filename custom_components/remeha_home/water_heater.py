@@ -221,6 +221,9 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         if not target_mode:
             return
 
+        if self._mode == "Boost" and target_mode != "Boost":
+            await self.api.async_set_hot_water_boost(self.hot_water_zone_id, False)
+
         if target_mode == "ContinuousComfort":
             await self.api.async_set_dhw_mode_comfort(self.hot_water_zone_id)
         elif target_mode == "Scheduling":

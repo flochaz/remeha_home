@@ -40,7 +40,7 @@
                 "state": {
                     "heat_pump": "Harmonogram",
                     "performance": "Komfort",
-                    "eco": "Antyzamrożenie",
+                    "eco": "Eko",
                     "high_demand": "Boost"
                 },
                 "state_attributes": {

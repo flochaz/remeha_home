@@ -225,4 +225,5 @@ class RemehaHomeUpdateCoordinator(DataUpdateCoordinator):
             activity = "Eco"
             self.dhw_activity_cache[zone_id] = activity
             return activity
+        self.dhw_activity_cache.pop(zone_id, None)
         return None
