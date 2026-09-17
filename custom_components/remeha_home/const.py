@@ -121,7 +121,7 @@ HOT_WATER_ZONE_SENSOR_TYPES = [
     ),
     SensorEntityDescription(
         key="dhwCurrentActivity",
-        name="Mode",
+        name="Current Activity",
     ),
     SensorEntityDescription(
         key="nextSwitchTime",
