@@ -41,7 +41,7 @@
                     "heat_pump": "Harmonogram",
                     "performance": "Komfort",
                     "eco": "Eko",
-                    "high_demand": "Boost"
+                    "high_demand": "Wzmocnienie"
                 },
                 "state_attributes": {
                     "current_temperature": {

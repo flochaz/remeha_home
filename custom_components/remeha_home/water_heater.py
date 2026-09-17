@@ -3,6 +3,7 @@
 from __future__ import annotations
 from typing import Any
 
+from aiohttp.client_exceptions import ClientResponseError
 from homeassistant.components.water_heater import (
     STATE_ECO,
     STATE_HIGH_DEMAND,
@@ -239,7 +240,7 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
                 )
             else:
                 return
-        except Exception:
+        except ClientResponseError:
             if leaving_boost:
                 await self.coordinator.async_request_refresh()
             raise
