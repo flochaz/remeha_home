@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Any
 
-from aiohttp.client_exceptions import ClientResponseError
+from aiohttp import ClientError
 from homeassistant.components.water_heater import (
     STATE_ECO,
     STATE_HIGH_DEMAND,
@@ -106,6 +106,18 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         """Prefer optimistic value when present, otherwise fallback."""
         return optimistic if optimistic is not None else fallback
 
+    def _effective_comfort_setpoint(self) -> float | None:
+        """Return comfort setpoint with optimistic fallback."""
+        return self._with_fallback(
+            self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
+        )
+
+    def _effective_reduced_setpoint(self) -> float | None:
+        """Return reduced setpoint with optimistic fallback."""
+        return self._with_fallback(
+            self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
+        )
+
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info for this device."""
@@ -128,13 +140,9 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
             return self._optimistic_target_setpoint
         setpoint_type = self._current_setpoint_type()
         if setpoint_type == "comfort":
-            return self._with_fallback(
-                self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
-            )
+            return self._effective_comfort_setpoint()
         if setpoint_type == "eco":
-            return self._with_fallback(
-                self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
-            )
+            return self._effective_reduced_setpoint()
         return self._data.get("targetSetpoint")
 
     @property
@@ -222,11 +230,10 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         if not target_mode:
             return
 
-        leaving_boost = self._mode == "Boost" and target_mode != "Boost"
-        if leaving_boost:
-            await self.api.async_set_hot_water_boost(self.hot_water_zone_id, False)
-
         try:
+            leaving_boost = self._mode == "Boost" and target_mode != "Boost"
+            if leaving_boost:
+                await self.api.async_set_hot_water_boost(self.hot_water_zone_id, False)
             if target_mode == "ContinuousComfort":
                 await self.api.async_set_dhw_mode_comfort(self.hot_water_zone_id)
             elif target_mode == "Scheduling":
@@ -240,9 +247,8 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
                 )
             else:
                 return
-        except ClientResponseError:
-            if leaving_boost:
-                await self.coordinator.async_request_refresh()
+        except (ClientError, TimeoutError):
+            await self.coordinator.async_request_refresh()
             raise
 
         # Optimistic update until the coordinator polls fresh data
@@ -254,43 +260,21 @@ class RemehaHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
     def _set_optimistic_target_setpoint(self, target_mode: str) -> None:
         """Update local target setpoint to reflect the selected mode immediately."""
         if target_mode in ("ContinuousComfort", "Boost"):
-            self._optimistic_target_setpoint = (
-                self._with_fallback(
-                    self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
-                )
-            )
+            self._optimistic_target_setpoint = self._effective_comfort_setpoint()
             return
         if target_mode == "Scheduling":
             activity = detect_dhw_setpoint_activity(
                 self._data.get("targetSetpoint"),
-                self._with_fallback(
-                    self._optimistic_comfort_setpoint, self._data.get("comfortSetPoint")
-                ),
-                self._with_fallback(
-                    self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
-                ),
+                self._effective_comfort_setpoint(),
+                self._effective_reduced_setpoint(),
             )
             if activity == "Comfort":
-                self._optimistic_target_setpoint = (
-                    self._with_fallback(
-                        self._optimistic_comfort_setpoint,
-                        self._data.get("comfortSetPoint"),
-                    )
-                )
+                self._optimistic_target_setpoint = self._effective_comfort_setpoint()
             elif activity == "Eco":
-                self._optimistic_target_setpoint = (
-                    self._with_fallback(
-                        self._optimistic_reduced_setpoint,
-                        self._data.get("reducedSetpoint"),
-                    )
-                )
+                self._optimistic_target_setpoint = self._effective_reduced_setpoint()
             return
         if target_mode == "Off":
-            self._optimistic_target_setpoint = (
-                self._with_fallback(
-                    self._optimistic_reduced_setpoint, self._data.get("reducedSetpoint")
-                )
-            )
+            self._optimistic_target_setpoint = self._effective_reduced_setpoint()
 
     @property
     def available(self) -> bool:
